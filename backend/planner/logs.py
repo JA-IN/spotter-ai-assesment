@@ -79,6 +79,9 @@ def _split_events_at_midnight(events: List[DutyEvent]) -> List[DutyEvent]:
     """
     Splits any event that crosses midnight (00:00:00) into distinct sub-events,
     ensuring each sub-event belongs to exactly one calendar day.
+
+    For DRIVING events with a known end_route_mile, the mileage is proportionally
+    split so each sub-event carries accurate route_mile → end_route_mile bounds.
     """
     split_events: List[DutyEvent] = []
 
@@ -86,13 +89,24 @@ def _split_events_at_midnight(events: List[DutyEvent]) -> List[DutyEvent]:
         cur_start = event.start_time
         cur_end = event.end_time
         cur_mile = event.route_mile
+        # Track the running end_route_mile for proportional splits
+        cur_end_mile: Optional[float] = event.end_route_mile
+        total_seconds = (event.end_time - event.start_time).total_seconds()
 
         if cur_start >= cur_end:
             continue
 
         while cur_start.date() < cur_end.date():
             next_midnight = datetime.combine(cur_start.date() + timedelta(days=1), time.min)
-            chunk_hours = (next_midnight - cur_start).total_seconds() / 3600.0
+            chunk_seconds = (next_midnight - cur_start).total_seconds()
+            chunk_hours = chunk_seconds / 3600.0
+
+            # Proportionally compute the end mile for this chunk
+            if event.end_route_mile is not None and total_seconds > 0:
+                fraction = chunk_seconds / total_seconds
+                chunk_end_mile: Optional[float] = event.route_mile + fraction * (event.end_route_mile - event.route_mile)
+            else:
+                chunk_end_mile = None
 
             split_events.append(
                 DutyEvent(
@@ -102,12 +116,14 @@ def _split_events_at_midnight(events: List[DutyEvent]) -> List[DutyEvent]:
                     status=event.status,
                     annotation=event.annotation,
                     route_mile=cur_mile,
+                    end_route_mile=round(chunk_end_mile, 4) if chunk_end_mile is not None else None,
                     location_name=event.location_name,
                     event_type=event.event_type,
                 )
             )
 
             cur_start = next_midnight
+            cur_mile = chunk_end_mile if chunk_end_mile is not None else cur_mile
 
         # Remaining piece within the final day
         final_hours = (cur_end - cur_start).total_seconds() / 3600.0
@@ -120,12 +136,79 @@ def _split_events_at_midnight(events: List[DutyEvent]) -> List[DutyEvent]:
                     status=event.status,
                     annotation=event.annotation,
                     route_mile=cur_mile,
+                    end_route_mile=cur_end_mile,
                     location_name=event.location_name,
                     event_type=event.event_type,
                 )
             )
 
     return split_events
+
+
+def _merge_adjacent_events(events: List[DutyEvent]) -> List[DutyEvent]:
+    """
+    Collapses consecutive events that share the same DutyStatus and have
+    directly touching timestamps into a single merged event.
+
+    Rules:
+    - Two events are mergeable when:
+        event[i].status == event[i+1].status
+        AND event[i].end_time == event[i+1].start_time
+    - For DRIVING events, the merged event inherits:
+        route_mile      from the FIRST segment
+        end_route_mile  from the LAST  segment
+    - For non-driving events, end_route_mile stays None.
+    - The merged event keeps the annotation and location_name of the
+      FIRST event in the run (preserving meaningful labels like
+      "10-hour mandatory shift rest" rather than a later generic "Off Duty").
+    """
+    if not events:
+        return []
+
+    merged: List[DutyEvent] = []
+    # Start with a copy of the first event so we can mutate safely
+    current = DutyEvent(
+        start_time=events[0].start_time,
+        end_time=events[0].end_time,
+        duration_hours=events[0].duration_hours,
+        status=events[0].status,
+        annotation=events[0].annotation,
+        route_mile=events[0].route_mile,
+        end_route_mile=events[0].end_route_mile,
+        location_name=events[0].location_name,
+        event_type=events[0].event_type,
+    )
+
+    for nxt in events[1:]:
+        can_merge = (
+            nxt.status == current.status
+            and nxt.start_time == current.end_time
+        )
+        if can_merge:
+            # Extend the current event's window
+            current.end_time = nxt.end_time
+            current.duration_hours = round(
+                current.duration_hours + nxt.duration_hours, 4
+            )
+            # For driving events, advance the ending mile marker
+            if nxt.end_route_mile is not None:
+                current.end_route_mile = nxt.end_route_mile
+        else:
+            merged.append(current)
+            current = DutyEvent(
+                start_time=nxt.start_time,
+                end_time=nxt.end_time,
+                duration_hours=nxt.duration_hours,
+                status=nxt.status,
+                annotation=nxt.annotation,
+                route_mile=nxt.route_mile,
+                end_route_mile=nxt.end_route_mile,
+                location_name=nxt.location_name,
+                event_type=nxt.event_type,
+            )
+
+    merged.append(current)
+    return merged
 
 
 def generate_daily_logs(events: List[DutyEvent], pad_24h: bool = True) -> List[DailyLog]:
@@ -183,6 +266,7 @@ def generate_daily_logs(events: List[DutyEvent], pad_24h: bool = True) -> List[D
                         status=DutyStatus.OFF_DUTY,
                         annotation="Off Duty",
                         route_mile=0.0,
+                        end_route_mile=None,
                         event_type="OFF_DUTY",
                     )
                 )
@@ -198,6 +282,7 @@ def generate_daily_logs(events: List[DutyEvent], pad_24h: bool = True) -> List[D
                             status=DutyStatus.OFF_DUTY,
                             annotation="Off Duty",
                             route_mile=first_event.route_mile,
+                            end_route_mile=None,
                             location_name=first_event.location_name,
                             event_type="OFF_DUTY",
                         )
@@ -217,6 +302,7 @@ def generate_daily_logs(events: List[DutyEvent], pad_24h: bool = True) -> List[D
                                     status=DutyStatus.OFF_DUTY,
                                     annotation="Off Duty",
                                     route_mile=prev_evt.route_mile,
+                                    end_route_mile=None,
                                     event_type="OFF_DUTY",
                                 )
                             )
@@ -234,12 +320,17 @@ def generate_daily_logs(events: List[DutyEvent], pad_24h: bool = True) -> List[D
                             status=DutyStatus.OFF_DUTY,
                             annotation="Off Duty",
                             route_mile=last_event.route_mile,
+                            end_route_mile=None,
                             location_name=last_event.location_name,
                             event_type="OFF_DUTY",
                         )
                     )
         else:
             processed_events = day_events
+
+        # Merge adjacent events that share the same status (e.g. two OFF_DUTY
+        # blocks that were independently generated but touch each other).
+        processed_events = _merge_adjacent_events(processed_events)
 
         # 3. Calculate category totals
         off_duty = sum(e.duration_hours for e in processed_events if e.status == DutyStatus.OFF_DUTY)
@@ -248,21 +339,13 @@ def generate_daily_logs(events: List[DutyEvent], pad_24h: bool = True) -> List[D
         on_duty = sum(e.duration_hours for e in processed_events if e.status == DutyStatus.ON_DUTY_NOT_DRIVING)
         total = off_duty + sleeper + driving + on_duty
 
-        # 4. Calculate day miles and remarks
-        # Day miles are determined by start/end route miles on driving events
+        # 4. Calculate day miles from driving events using exact start/end mile markers
         day_drive_events = [e for e in processed_events if e.status == DutyStatus.DRIVING]
-        day_miles = 0.0
-        for evt in day_drive_events:
-            # We estimate segment miles from duration if speed is known or from events
-            # For exact tracking, calculate proportional miles
-            pass
-        if day_drive_events:
-            # Estimate from route_mile progression
-            day_miles = max(0.0, day_drive_events[-1].route_mile - day_drive_events[0].route_mile)
-            # Add final leg chunk distance if recorded
-            if len(day_drive_events) == 1:
-                # If single event, use duration * speed
-                day_miles = round(day_drive_events[0].duration_hours * 55.0, 1)
+        day_miles = sum(
+            e.end_route_mile - e.route_mile
+            for e in day_drive_events
+            if e.end_route_mile is not None
+        )
 
         # Build remarks
         remarks: List[DailyLogRemark] = []

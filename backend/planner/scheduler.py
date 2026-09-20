@@ -2,14 +2,29 @@
 Pure Python HOS Scheduler Engine.
 
 Contains:
-- FMCSA Property-Carrying HOS Regulatory Constants
 - SchedulerState: Conceptual state machine representation for a commercial driver
-- HOSScheduler: Deterministic HOS scheduler implementing all federal rules
+- HOSScheduler: Deterministic HOS scheduler implementing federal Property-Carrying rules
 """
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import List, Optional, Union
 
+from planner.constants import (
+    AVERAGE_DRIVE_SPEED_MPH,
+    BREAK_AFTER_DRIVING_HOURS,
+    BREAK_DURATION_HOURS,
+    CYCLE_LIMIT_HOURS,
+    CYCLE_RESTART_DURATION_HOURS,
+    DROPOFF_DURATION_HOURS,
+    EPSILON,
+    FUEL_DURATION_HOURS,
+    FUEL_INTERVAL_MILES,
+    MAX_DRIVING_HOURS,
+    MAX_SHIFT_WINDOW_HOURS,
+    PICKUP_DURATION_HOURS,
+    RESTART_DURATION_HOURS,
+    REST_DURATION_HOURS,
+)
 from planner.tasks import (
     DriveTask,
     DutyEvent,
@@ -19,27 +34,25 @@ from planner.tasks import (
     Stop,
 )
 
-# -----------------------------------------------------------------------------
-# FMCSA Property-Carrying (70h / 8-day) HOS Constants
-# Single source of truth for all scheduling constraints & durations
-# -----------------------------------------------------------------------------
-MAX_DRIVING_HOURS: float = 11.0            # Max driving hours per shift
-MAX_SHIFT_WINDOW_HOURS: float = 14.0       # Max consecutive duty window per shift
-BREAK_AFTER_DRIVING_HOURS: float = 8.0     # Max cumulative driving before 30-min break
-BREAK_DURATION_HOURS: float = 0.5          # 30-minute rest break duration
-REST_DURATION_HOURS: float = 10.0          # 10 consecutive hours off-duty for shift reset
-CYCLE_LIMIT_HOURS: float = 70.0            # 70-hour / 8-day cycle limit
-RESTART_DURATION_HOURS: float = 34.0       # 34 consecutive hours off-duty for cycle restart
-CYCLE_RESTART_DURATION_HOURS: float = 34.0 # Alias for 34-hour restart
-
-# Operational defaults
-PICKUP_DURATION_HOURS: float = 1.0         # Default time for pickup operations
-DROPOFF_DURATION_HOURS: float = 1.0        # Default time for dropoff operations
-FUEL_INTERVAL_MILES: float = 1000.0        # Mandatory fuel stop interval
-FUEL_DURATION_HOURS: float = 0.5           # Default time spent fueling (30 mins)
-AVERAGE_DRIVE_SPEED_MPH: float = 55.0      # Default estimation speed (mph)
-
-EPSILON: float = 1e-6                      # Numerical tolerance for floating-point comparisons
+__all__ = [
+    "HOSScheduler",
+    "SchedulerState",
+    "schedule_trip",
+    "MAX_DRIVING_HOURS",
+    "MAX_SHIFT_WINDOW_HOURS",
+    "BREAK_AFTER_DRIVING_HOURS",
+    "BREAK_DURATION_HOURS",
+    "REST_DURATION_HOURS",
+    "CYCLE_LIMIT_HOURS",
+    "RESTART_DURATION_HOURS",
+    "CYCLE_RESTART_DURATION_HOURS",
+    "PICKUP_DURATION_HOURS",
+    "DROPOFF_DURATION_HOURS",
+    "FUEL_INTERVAL_MILES",
+    "FUEL_DURATION_HOURS",
+    "AVERAGE_DRIVE_SPEED_MPH",
+    "EPSILON",
+]
 
 
 @dataclass
@@ -144,6 +157,7 @@ class HOSScheduler:
                 status=DutyStatus.OFF_DUTY,
                 annotation="34-hour cycle restart",
                 route_mile=state.current_mile,
+                end_route_mile=None,
                 location_name=f"Restart Stop @ Mile {int(round(state.current_mile))}",
                 event_type="RESTART",
             )
@@ -177,6 +191,7 @@ class HOSScheduler:
                 status=DutyStatus.OFF_DUTY,
                 annotation="10-hour mandatory shift rest",
                 route_mile=state.current_mile,
+                end_route_mile=None,
                 location_name=f"Rest Area @ Mile {int(round(state.current_mile))}",
                 event_type="REST",
             )
@@ -209,6 +224,7 @@ class HOSScheduler:
                 status=DutyStatus.OFF_DUTY,
                 annotation="30-minute rest break",
                 route_mile=state.current_mile,
+                end_route_mile=None,
                 location_name=f"Break Stop @ Mile {int(round(state.current_mile))}",
                 event_type="BREAK",
             )
@@ -228,7 +244,13 @@ class HOSScheduler:
         state.driving_since_break = 0.0
 
     def _schedule_service_task(self, state: SchedulerState, task: ServiceTask) -> None:
-        """Schedules a service task (e.g. Pickup, Dropoff, Fuel, planned Rest/Break)."""
+        """
+        Schedules a service task (e.g. Pickup, Dropoff, Fuel, planned Rest/Break).
+        Enforces:
+        - Planned REST / BREAK tasks trigger appropriate state resets.
+        - 70-hour cycle limit check (triggers 34h restart if exceeded).
+        - 14-hour shift window & 11-hour driving exhaustion checks (triggers 10h rest if service exceeds window).
+        """
         if task.service_type == ServiceType.REST:
             self._apply_10h_rest(state)
             return
@@ -239,6 +261,13 @@ class HOSScheduler:
         # 1. Check if 70-hour cycle limit would be exceeded
         if state.cycle_used + task.duration_hours > CYCLE_LIMIT_HOURS + EPSILON:
             self._apply_34h_restart(state)
+
+        # 2. Check if service cannot fit in the active 14-hour window or driving was already exhausted
+        if state.shift_start is not None:
+            will_exceed_window = (state.shift_elapsed_hours + task.duration_hours > MAX_SHIFT_WINDOW_HOURS + EPSILON)
+            driving_exhausted = (state.shift_driving >= MAX_DRIVING_HOURS - EPSILON)
+            if will_exceed_window or driving_exhausted:
+                self._apply_10h_rest(state)
 
         # Start new shift window if driver was off-duty
         if state.shift_start is None:
@@ -256,6 +285,7 @@ class HOSScheduler:
                 status=DutyStatus.ON_DUTY_NOT_DRIVING,
                 annotation=annotation,
                 route_mile=task.route_mile,
+                end_route_mile=None,
                 location_name=task.location,
                 event_type=task.service_type.value,
             )
@@ -319,6 +349,8 @@ class HOSScheduler:
 
             start = state.current_time
             end = start + timedelta(hours=chunk_hours)
+            start_mile = state.current_mile
+            end_mile = start_mile + chunk_miles
 
             state.events.append(
                 DutyEvent(
@@ -327,7 +359,8 @@ class HOSScheduler:
                     duration_hours=chunk_hours,
                     status=DutyStatus.DRIVING,
                     annotation=f"Driving towards {task.destination}",
-                    route_mile=state.current_mile,
+                    route_mile=start_mile,
+                    end_route_mile=end_mile,
                     location_name=task.destination,
                     event_type="DRIVE",
                 )
@@ -335,7 +368,7 @@ class HOSScheduler:
 
             # Advance state
             state.current_time = end
-            state.current_mile += chunk_miles
+            state.current_mile = end_mile
             state.shift_driving += chunk_hours
             state.driving_since_break += chunk_hours
             state.cycle_used += chunk_hours
