@@ -5,6 +5,7 @@ Django settings for Spotter AI Trip Planner.
 from pathlib import Path
 import os
 from dotenv import load_dotenv
+from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -12,9 +13,14 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Load environment variables from .env file
 load_dotenv(BASE_DIR / '.env')
 
-SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-spotter-ai-dev-key-change-in-production')
-
 DEBUG = os.getenv('DEBUG', 'True').lower() in ('true', '1', 'yes')
+
+SECRET_KEY = os.getenv('SECRET_KEY')
+if not SECRET_KEY:
+    if DEBUG:
+        SECRET_KEY = 'django-insecure-spotter-ai-dev-key-change-in-production'
+    else:
+        raise ImproperlyConfigured('SECRET_KEY must be set when DEBUG is false.')
 
 ALLOWED_HOSTS = [
     host.strip()

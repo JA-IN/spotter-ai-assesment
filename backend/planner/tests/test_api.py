@@ -25,6 +25,38 @@ class TestPlanTripAPI(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("current_location", response.json())
 
+    @patch("planner.views.calculate_route", side_effect=ValueError("Location not found: 'Invalid Place'") )
+    def test_invalid_route_location_returns_clear_error(self, mock_calculate_route):
+        response = self.client.post(
+            "/api/plan-trip/",
+            {
+                "current_location": "Invalid Place",
+                "pickup_location": "Pickup City",
+                "dropoff_location": "Dropoff City",
+                "current_cycle_used": 0.0,
+            },
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"], "Location not found: 'Invalid Place'")
+
+    @patch("planner.views.calculate_route", side_effect=RuntimeError("routing service unavailable"))
+    def test_routing_failure_returns_gateway_error(self, mock_calculate_route):
+        response = self.client.post(
+            "/api/plan-trip/",
+            {
+                "current_location": "Current City",
+                "pickup_location": "Pickup City",
+                "dropoff_location": "Dropoff City",
+                "current_cycle_used": 0.0,
+            },
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("routing service unavailable", response.json()["detail"])
+
     @patch("planner.views.generate_daily_logs")
     @patch("planner.views.HOSScheduler")
     @patch("planner.views.build_tasks_from_route")

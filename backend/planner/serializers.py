@@ -11,12 +11,13 @@ HOS legality (e.g. 11-hour driving limit) is the scheduler's responsibility,
 not the serializer's.
 """
 from rest_framework import serializers
+from planner.constants import CYCLE_LIMIT_HOURS
 
 # ---------------------------------------------------------------------------
 # Constants mirrored from FMCSA rules (for field-level boundary validation
 # only — do NOT import from scheduler or planner internals here).
 # ---------------------------------------------------------------------------
-_CYCLE_LIMIT_HOURS = 70.0  # 70-hour / 8-day Property-Carrying cycle cap
+_CYCLE_LIMIT_HOURS = CYCLE_LIMIT_HOURS
 
 
 class TripPlanRequestSerializer(serializers.Serializer):
