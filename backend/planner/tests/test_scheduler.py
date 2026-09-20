@@ -30,6 +30,7 @@ from planner.constants import (
     REST_DURATION_HOURS,
 )
 from planner.scheduler import HOSScheduler, SchedulerState, schedule_trip
+from planner.logs import generate_daily_logs
 from planner.task_builder import build_tasks, build_tasks_from_route
 from planner.routing import GeocodedLocation, RouteResult, RouteSegment
 from planner.tasks import (
@@ -286,6 +287,28 @@ class TestHOSScheduler(unittest.TestCase):
         self.assertEqual(state.cycle_used, 4.0)
         self.assertEqual(state.shift_driving, 4.0)
 
+    def test_5b_60h_cycle_uses_remaining_hours_then_restarts(self):
+        """A 60-hour cycle leaves 10 hours before the 34-hour restart is required."""
+        tasks = [
+            DriveTask(
+                duration_hours=15.0,
+                distance_miles=825.0,
+                start_mile=0.0,
+                end_mile=825.0,
+                origin="City A",
+                destination="City B",
+            )
+        ]
+
+        state = schedule_trip(tasks, start_time=datetime(2026, 9, 20, 6, 0, 0), initial_cycle_used=60.0)
+        driving_events = [event for event in state.events if event.status == DutyStatus.DRIVING]
+        restart_events = [event for event in state.events if event.event_type == "RESTART"]
+
+        self.assertEqual([event.duration_hours for event in driving_events], [8.0, 2.0, 5.0])
+        self.assertEqual(len(restart_events), 1)
+        self.assertEqual(state.cycle_used, 5.0)
+        self.assertEqual(state.shift_driving, 5.0)
+
     def test_6_pickup_dropoff(self):
         """Test 6: Trip with origin pickup and destination dropoff service tasks."""
         start = datetime(2026, 9, 20, 8, 0, 0)
@@ -365,6 +388,13 @@ class TestHOSScheduler(unittest.TestCase):
         rest_stops = [s for s in state.stops if s.stop_type == ServiceType.REST]
         self.assertTrue(len(rest_stops) >= 3)
 
+        fuel_events = [event for event in state.events if event.event_type == "FUEL"]
+        self.assertEqual([event.route_mile for event in fuel_events], [1000.0, 2000.0])
+
+        daily_logs = generate_daily_logs(state.events)
+        fuel_remarks = [remark for log in daily_logs for remark in log.remarks if remark.status == DutyStatus.ON_DUTY_NOT_DRIVING and "Fuel" in remark.annotation]
+        self.assertEqual([remark.route_mile for remark in fuel_remarks], [1000.0, 2000.0])
+
     def test_route_result_builds_drive_pickup_drive_dropoff_tasks(self):
         """RouteResult segments should convert cleanly into the scheduler's ordered task stream."""
         route = RouteResult(
@@ -419,6 +449,46 @@ class TestHOSScheduler(unittest.TestCase):
         self.assertIsInstance(tasks[3], ServiceTask)
         self.assertEqual(tasks[3].service_type, ServiceType.DROPOFF)
         self.assertEqual(tasks[3].route_mile, 200.0)
+
+    def test_route_result_inserts_fuel_at_every_1000_mile_boundary(self):
+        """Fuel stops must span both route segments and repeat beyond 2,000 miles."""
+        route = RouteResult(
+            current_location=GeocodedLocation(name="Current City", latitude=0.0, longitude=0.0),
+            pickup_location=GeocodedLocation(name="Pickup City", latitude=1.0, longitude=1.0),
+            dropoff_location=GeocodedLocation(name="Dropoff City", latitude=3.0, longitude=3.0),
+            total_distance_miles=2300.0,
+            total_duration_hours=42.0,
+            geometry=[],
+            segments=[
+                RouteSegment(
+                    origin="Current City",
+                    destination="Pickup City",
+                    origin_coordinates=(0.0, 0.0),
+                    destination_coordinates=(1.0, 1.0),
+                    distance_miles=1200.0,
+                    duration_hours=22.0,
+                    geometry=[],
+                ),
+                RouteSegment(
+                    origin="Pickup City",
+                    destination="Dropoff City",
+                    origin_coordinates=(1.0, 1.0),
+                    destination_coordinates=(3.0, 3.0),
+                    distance_miles=1100.0,
+                    duration_hours=20.0,
+                    geometry=[],
+                ),
+            ],
+        )
+
+        tasks = build_tasks_from_route(route)
+        fuel_tasks = [task for task in tasks if isinstance(task, ServiceTask) and task.service_type == ServiceType.FUEL]
+
+        self.assertEqual([task.route_mile for task in fuel_tasks], [1000.0, 2000.0])
+        self.assertAlmostEqual(
+            sum(task.distance_miles for task in tasks if isinstance(task, DriveTask)),
+            2300.0,
+        )
 
 
 if __name__ == "__main__":

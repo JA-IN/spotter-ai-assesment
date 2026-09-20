@@ -14,7 +14,7 @@ from planner.constants import (
     FUEL_INTERVAL_MILES,
     PICKUP_DURATION_HOURS,
 )
-from planner.routing import RouteResult
+from planner.routing import RouteResult, RouteSegment
 from planner.tasks import (
     DriveTask,
     DutyEvent,
@@ -91,19 +91,51 @@ def build_tasks_from_route(
     segment_1_distance = first_segment.distance_miles
     segment_2_distance = second_segment.distance_miles
 
-    tasks.append(
-        DriveTask(
-            duration_hours=_planning_duration_hours(segment_1_distance),
-            distance_miles=segment_1_distance,
-            start_mile=0.0,
-            end_mile=segment_1_distance,
-            origin=first_segment.origin,
-            destination=first_segment.destination,
-            origin_coordinates=first_segment.origin_coordinates,
-            destination_coordinates=first_segment.destination_coordinates,
-            polyline=first_segment.geometry,
-        )
-    )
+    def append_segment_with_fuel(segment: RouteSegment, segment_start_mile: float) -> None:
+        segment_end_mile = segment_start_mile + segment.distance_miles
+        chunk_start_mile = segment_start_mile
+        chunk_origin = segment.origin
+
+        while chunk_start_mile < segment_end_mile - 1e-9:
+            next_fuel_mile = ((int(chunk_start_mile // FUEL_INTERVAL_MILES) + 1) * FUEL_INTERVAL_MILES)
+            chunk_end_mile = min(segment_end_mile, next_fuel_mile)
+            chunk_distance = chunk_end_mile - chunk_start_mile
+            is_fuel_boundary = chunk_end_mile < segment_end_mile - 1e-9 and abs(chunk_end_mile - next_fuel_mile) < 1e-9
+            chunk_destination = (
+                f"Fuel Stop @ Mile {int(round(chunk_end_mile))}"
+                if is_fuel_boundary
+                else segment.destination
+            )
+
+            tasks.append(
+                DriveTask(
+                    duration_hours=_planning_duration_hours(chunk_distance),
+                    distance_miles=chunk_distance,
+                    start_mile=chunk_start_mile,
+                    end_mile=chunk_end_mile,
+                    origin=chunk_origin,
+                    destination=chunk_destination,
+                    origin_coordinates=segment.origin_coordinates,
+                    destination_coordinates=segment.destination_coordinates,
+                    polyline=segment.geometry,
+                )
+            )
+
+            if is_fuel_boundary:
+                fuel_name = f"Fuel Stop @ Mile {int(round(chunk_end_mile))}"
+                tasks.append(
+                    ServiceTask(
+                        duration_hours=FUEL_DURATION_HOURS,
+                        route_mile=chunk_end_mile,
+                        location=fuel_name,
+                        service_type=ServiceType.FUEL,
+                        annotation=f"Mandatory Fuel Stop at Mile {int(round(chunk_end_mile))}",
+                    )
+                )
+                chunk_origin = fuel_name
+            chunk_start_mile = chunk_end_mile
+
+    append_segment_with_fuel(first_segment, 0.0)
 
     tasks.append(
         ServiceTask(
@@ -115,62 +147,7 @@ def build_tasks_from_route(
         )
     )
 
-    if route.total_distance_miles > FUEL_INTERVAL_MILES and segment_1_distance < FUEL_INTERVAL_MILES:
-        fuel_mile = FUEL_INTERVAL_MILES
-        drive_to_fuel_distance = fuel_mile - segment_1_distance
-        final_drive_distance = route.total_distance_miles - fuel_mile
-
-        tasks.append(
-            DriveTask(
-                duration_hours=_planning_duration_hours(drive_to_fuel_distance),
-                distance_miles=drive_to_fuel_distance,
-                start_mile=segment_1_distance,
-                end_mile=fuel_mile,
-                origin=second_segment.origin,
-                destination=f"Fuel Stop @ Mile {int(round(fuel_mile))}",
-                origin_coordinates=second_segment.origin_coordinates,
-                destination_coordinates=second_segment.destination_coordinates,
-                polyline=second_segment.geometry,
-            )
-        )
-
-        tasks.append(
-            ServiceTask(
-                duration_hours=FUEL_DURATION_HOURS,
-                route_mile=fuel_mile,
-                location=f"Fuel Stop @ Mile {int(round(fuel_mile))}",
-                service_type=ServiceType.FUEL,
-                annotation=f"Mandatory Fuel Stop at Mile {int(round(fuel_mile))}",
-            )
-        )
-
-        tasks.append(
-            DriveTask(
-                duration_hours=_planning_duration_hours(final_drive_distance),
-                distance_miles=final_drive_distance,
-                start_mile=fuel_mile,
-                end_mile=route.total_distance_miles,
-                origin=f"Fuel Stop @ Mile {int(round(fuel_mile))}",
-                destination=second_segment.destination,
-                origin_coordinates=second_segment.origin_coordinates,
-                destination_coordinates=second_segment.destination_coordinates,
-                polyline=second_segment.geometry,
-            )
-        )
-    else:
-        tasks.append(
-            DriveTask(
-                duration_hours=_planning_duration_hours(segment_2_distance),
-                distance_miles=segment_2_distance,
-                start_mile=segment_1_distance,
-                end_mile=route.total_distance_miles,
-                origin=second_segment.origin,
-                destination=second_segment.destination,
-                origin_coordinates=second_segment.origin_coordinates,
-                destination_coordinates=second_segment.destination_coordinates,
-                polyline=second_segment.geometry,
-            )
-        )
+    append_segment_with_fuel(second_segment, segment_1_distance)
 
     tasks.append(
         ServiceTask(
