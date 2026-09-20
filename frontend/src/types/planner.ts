@@ -6,6 +6,8 @@ export type DutyStatus =
   | 'DRIVING'
   | 'ON_DUTY_NOT_DRIVING';
 
+export const HOS_CYCLE_LIMIT_HOURS = 70;
+
 export type ServiceType = 'PICKUP' | 'DROPOFF' | 'FUEL' | 'REST' | 'BREAK';
 
 export interface PlanTripRequest {

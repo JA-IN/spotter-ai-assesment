@@ -10,16 +10,16 @@ function formatTime(value: string): string {
 }
 
 function formatDuration(hours: number): string {
-  const wholeHours = Math.floor(hours);
-  const minutes = Math.round((hours - wholeHours) * 60);
+  const totalMinutes = Math.round(hours * 60);
+  const wholeHours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
   return wholeHours > 0 ? `${wholeHours}h${minutes ? ` ${minutes}m` : ''}` : `${minutes}m`;
 }
 
 export const EventTimeline: React.FC<EventTimelineProps> = ({ events }) => {
   return (
-    <section className="detail-panel event-timeline-container">
-      <div className="section-kicker">Scheduler audit</div>
-      <h2>Event timeline</h2>
+    <section className="detail-panel panel event-timeline-container">
+      <div className="panel-heading"><div><div className="section-kicker">Duty events</div><h2>Event timeline</h2></div><span className="count-badge">{events.length}</span></div>
       <div className="event-list">
         {events.map((event, index) => (
           <article className={`event-item event-${event.event_type.toLowerCase()}`} key={`${event.event_type}-${event.start_time}-${index}`}>
@@ -30,7 +30,7 @@ export const EventTimeline: React.FC<EventTimelineProps> = ({ events }) => {
             <div className="event-line" aria-hidden="true"><span /></div>
             <div className="event-copy">
               <div className="event-label-row">
-                <strong>{event.event_type.replace(/_/g, ' ')}</strong>
+                <strong className={`status-badge status-${event.status.toLowerCase()}`}>{event.status.replace(/_/g, ' ')}</strong>
                 <span>{formatDuration(event.duration_hours)}</span>
               </div>
               <p>{event.annotation}</p>

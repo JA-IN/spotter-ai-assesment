@@ -1,5 +1,6 @@
 import React from 'react';
-import { PlanTripRequest } from '../types/planner';
+import { ArrowRight, MapPin } from 'lucide-react';
+import { HOS_CYCLE_LIMIT_HOURS, PlanTripRequest } from '../types/planner';
 
 interface TripFormProps {
   onSubmit: (request: PlanTripRequest) => void;
@@ -27,10 +28,15 @@ export const TripForm: React.FC<TripFormProps> = ({ onSubmit, isLoading }) => {
   };
 
   return (
-    <form className="trip-form-container" onSubmit={handleSubmit}>
-      <div className="section-kicker">New route plan</div>
-      <h2>Plan a compliant trip</h2>
-      <p className="form-intro">Enter the trip details exactly as they appear in the dispatch request.</p>
+    <form className="trip-form-container panel" onSubmit={handleSubmit} id="trip-plan">
+      <div className="panel-heading">
+        <div>
+          <div className="section-kicker">Trip plan</div>
+          <h2>Build a route</h2>
+        </div>
+        <span className="heading-icon"><MapPin size={18} /></span>
+      </div>
+      <p className="form-intro">Enter the dispatch request details. The scheduling engine will calculate stops, duty events, and daily logs.</p>
 
       <label>
         Current Location
@@ -38,7 +44,7 @@ export const TripForm: React.FC<TripFormProps> = ({ onSubmit, isLoading }) => {
           required
           value={form.current_location}
           onChange={(event) => updateField('current_location', event.target.value)}
-          placeholder="Chandigarh, India"
+          placeholder="Starting location"
         />
       </label>
 
@@ -48,7 +54,7 @@ export const TripForm: React.FC<TripFormProps> = ({ onSubmit, isLoading }) => {
           required
           value={form.pickup_location}
           onChange={(event) => updateField('pickup_location', event.target.value)}
-          placeholder="Delhi, India"
+          placeholder="Pickup location"
         />
       </label>
 
@@ -58,7 +64,7 @@ export const TripForm: React.FC<TripFormProps> = ({ onSubmit, isLoading }) => {
           required
           value={form.dropoff_location}
           onChange={(event) => updateField('dropoff_location', event.target.value)}
-          placeholder="Mumbai, India"
+          placeholder="Dropoff location"
         />
       </label>
 
@@ -67,17 +73,17 @@ export const TripForm: React.FC<TripFormProps> = ({ onSubmit, isLoading }) => {
         <input
           required
           min="0"
-          max="70"
+          max={HOS_CYCLE_LIMIT_HOURS}
           step="0.1"
           type="number"
           value={form.current_cycle_used}
           onChange={(event) => updateField('current_cycle_used', event.target.value)}
-          placeholder="60"
+          placeholder="0"
         />
       </label>
 
-      <button type="submit" disabled={isLoading}>
-        {isLoading ? 'Planning trip...' : 'Plan Trip'}
+      <button className="primary-button" type="submit" disabled={isLoading}>
+        {isLoading ? 'Planning route...' : 'Plan trip'} <ArrowRight size={16} />
       </button>
     </form>
   );

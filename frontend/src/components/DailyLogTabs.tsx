@@ -14,8 +14,9 @@ export const DailyLogTabs: React.FC<DailyLogTabsProps> = ({ logs }) => {
     <section className="daily-log-tabs-container">
       <div className="log-tabs-heading">
         <div>
-          <div className="section-kicker">Compliance record</div>
-          <h2>Daily ELD logs</h2>
+          <div className="section-kicker">Daily log record</div>
+          <h2 id="daily-logs">Daily ELD logs</h2>
+          <p className="panel-subtitle">Generated from the scheduler duty events returned for this trip.</p>
         </div>
         <div className="log-tabs" role="tablist" aria-label="Daily logs">
           {logs.map((log, index) => (
@@ -27,7 +28,7 @@ export const DailyLogTabs: React.FC<DailyLogTabsProps> = ({ logs }) => {
               aria-selected={index === activeIndex}
               type="button"
             >
-              Day {log.day_number}
+                Day {log.day_number}<span>{log.date}</span>
             </button>
           ))}
         </div>
