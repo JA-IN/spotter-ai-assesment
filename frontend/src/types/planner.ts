@@ -1,16 +1,12 @@
-/**
- * TypeScript definitions for Spotter AI Trip Planner.
- * Mirrors the API contracts defined in the technical specification.
- */
+/** TypeScript definitions for the Django trip-planning response. */
 
-export type DutyStatus = 'off_duty' | 'sleeper_berth' | 'driving' | 'on_duty';
+export type DutyStatus =
+  | 'OFF_DUTY'
+  | 'SLEEPER_BERTH'
+  | 'DRIVING'
+  | 'ON_DUTY_NOT_DRIVING';
 
-export type TaskType = 'drive' | 'pickup' | 'dropoff' | 'fuel' | 'break' | 'rest' | 'restart';
-
-export interface LatLngCoordinate {
-  lat: number;
-  lng: number;
-}
+export type ServiceType = 'PICKUP' | 'DROPOFF' | 'FUEL' | 'REST' | 'BREAK';
 
 export interface PlanTripRequest {
   current_location: string;
@@ -19,67 +15,100 @@ export interface PlanTripRequest {
   current_cycle_used: number;
 }
 
-export interface RouteGeometry {
+export interface RouteLocation {
+  name: string;
+  latitude: number;
+  longitude: number;
+}
+
+export interface RouteSegment {
+  origin: string;
+  destination: string;
+  origin_coordinates: [number, number];
+  destination_coordinates: [number, number];
   distance_miles: number;
-  estimated_driving_minutes: number;
-  geometry: [number, number][]; // [lat, lng] ordered coordinates
+  duration_hours: number;
+  geometry: [number, number][];
 }
 
-export interface TripSummary {
+export interface PlannerRoute {
+  current_location: RouteLocation;
+  pickup_location: RouteLocation;
+  dropoff_location: RouteLocation;
   total_distance_miles: number;
-  driving_minutes: number;
-  on_duty_minutes: number;
-  off_duty_minutes: number;
-  fuel_stops: number;
-  breaks_30_min: number;
-  rest_stops_10h: number;
-  restarts_34h: number;
-  daily_logs: number;
+  total_duration_hours: number;
+  geometry: [number, number][];
+  segments: RouteSegment[];
 }
 
-export interface PlannedStop {
+export interface PlannerTask {
   type: string;
-  route_mile: number;
-  start: string;
-  end: string;
-  location: string;
-  coordinate: LatLngCoordinate;
-  duration_minutes?: number;
-  reason?: string;
+  duration_hours: number;
+  annotation: string;
+  distance_miles?: number;
+  start_mile?: number;
+  end_mile?: number;
+  route_mile?: number;
+  location?: string;
+  service_type?: ServiceType;
+  origin?: string;
+  destination?: string;
+  origin_coordinates?: [number, number];
+  destination_coordinates?: [number, number];
+  polyline?: [number, number][];
 }
 
-export interface DutyEvent {
+export interface PlannerEvent {
+  start_time: string;
+  end_time: string;
+  duration_hours: number;
   status: DutyStatus;
-  start: string;
-  end: string;
-  duration_minutes: number;
-  miles: number;
+  annotation: string;
+  route_mile: number;
+  end_route_mile: number | null;
+  location_name: string;
+  event_type: string;
+}
+
+export interface PlannerStop {
+  stop_type: ServiceType;
+  name: string;
+  route_mile: number;
+  arrival_time: string;
+  departure_time: string;
+  duration_hours: number;
+  annotation: string;
+  lat: number | null;
+  lng: number | null;
+}
+
+export interface DailyLogRemark {
+  time: string;
   location: string;
-  coordinate: LatLngCoordinate;
-  reason?: string;
-  task_type: TaskType;
+  annotation: string;
+  status: DutyStatus;
+  route_mile: number;
 }
 
-export interface DailyTotals {
-  off_duty_minutes: number;
-  sleeper_minutes: number;
-  driving_minutes: number;
-  on_duty_minutes: number;
-}
-
-export interface DailyLogSheet {
+export interface DailyLog {
   date: string;
-  total_miles: number;
-  events: DutyEvent[];
-  totals: DailyTotals;
-  remarks: string[];
+  day_number: number;
+  events: PlannerEvent[];
+  off_duty_hours: number;
+  sleeper_berth_hours: number;
+  driving_hours: number;
+  on_duty_not_driving_hours: number;
+  total_hours: number;
+  miles_driven: number;
+  remarks: DailyLogRemark[];
 }
 
-export interface PlanTripResponse {
-  route: RouteGeometry;
-  summary: TripSummary;
-  stops: PlannedStop[];
-  events: DutyEvent[];
-  daily_logs: DailyLogSheet[];
-  warnings: string[];
+export interface PlannerResponse {
+  route: PlannerRoute;
+  tasks: PlannerTask[];
+  events: PlannerEvent[];
+  stops: PlannerStop[];
+  daily_logs: DailyLog[];
 }
+
+export type PlanTripResponse = PlannerResponse;

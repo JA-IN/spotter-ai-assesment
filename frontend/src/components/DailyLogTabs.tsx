@@ -1,9 +1,38 @@
 import React from 'react';
+import { DailyLog as DailyLogData } from '../types/planner';
+import { DailyLog } from './DailyLog';
 
-export const DailyLogTabs: React.FC = () => {
+interface DailyLogTabsProps {
+  logs: DailyLogData[];
+}
+
+export const DailyLogTabs: React.FC<DailyLogTabsProps> = ({ logs }) => {
+  const [activeIndex, setActiveIndex] = React.useState(0);
+  const activeLog = logs[activeIndex];
+
   return (
-    <div className="daily-log-tabs-container">
-      {/* Day 1 / Day 2 navigation tabs implementation in Phase 7 */}
-    </div>
+    <section className="daily-log-tabs-container">
+      <div className="log-tabs-heading">
+        <div>
+          <div className="section-kicker">Compliance record</div>
+          <h2>Daily ELD logs</h2>
+        </div>
+        <div className="log-tabs" role="tablist" aria-label="Daily logs">
+          {logs.map((log, index) => (
+            <button
+              key={log.date}
+              className={index === activeIndex ? 'active' : ''}
+              onClick={() => setActiveIndex(index)}
+              role="tab"
+              aria-selected={index === activeIndex}
+              type="button"
+            >
+              Day {log.day_number}
+            </button>
+          ))}
+        </div>
+      </div>
+      {activeLog ? <DailyLog log={activeLog} /> : <p className="muted-copy">No daily logs were returned.</p>}
+    </section>
   );
 };
