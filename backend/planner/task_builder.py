@@ -1,5 +1,5 @@
 """
-Task builder module: converts route parameters and stops into ordered task sequences.
+Task builder module: converts route parameters and customer stops into ordered task sequences.
 
 Separation of Concerns:
 - task_builder.py defines WHAT must happen (Pickup, Driving segments, Fuel stops, Dropoff).
@@ -7,13 +7,14 @@ Separation of Concerns:
 """
 from typing import List, Optional, Tuple, Union
 
-from planner.scheduler import (
+from planner.constants import (
     AVERAGE_DRIVE_SPEED_MPH,
     DROPOFF_DURATION_HOURS,
     FUEL_DURATION_HOURS,
     FUEL_INTERVAL_MILES,
     PICKUP_DURATION_HOURS,
 )
+from planner.routing import RouteResult
 from planner.tasks import (
     DriveTask,
     DutyEvent,
@@ -24,6 +25,23 @@ from planner.tasks import (
     Stop,
 )
 
+
+def _planning_duration_hours(distance_miles: float) -> float:
+    """
+    HOS scheduling uses a planning duration derived from the project's operating
+    assumption, not OSRM route ETA.
+
+    This is a deliberate architectural split:
+      - RouteSegment.duration_hours = OSRM estimated road ETA for display/routing
+      - DriveTask.duration_hours    = HOS planning duration used by the scheduler
+
+    The project already defines an operational average driving speed of 55 mph in
+    planner.constants, so we use that as the scheduler's planning assumption.
+    """
+    if distance_miles <= 0:
+        return 0.0
+    return distance_miles / AVERAGE_DRIVE_SPEED_MPH
+
 __all__ = [
     "DutyStatus",
     "ServiceType",
@@ -33,7 +51,95 @@ __all__ = [
     "DutyEvent",
     "Stop",
     "build_tasks",
+    "build_tasks_from_route",
 ]
+
+
+def build_tasks_from_route(
+    route: RouteResult,
+    pickup_duration_hours: float = PICKUP_DURATION_HOURS,
+    dropoff_duration_hours: float = DROPOFF_DURATION_HOURS,
+) -> List[Union[DriveTask, ServiceTask]]:
+    """
+    Convert a route result into the canonical ordered task stream expected by the scheduler:
+    Drive(current -> pickup)
+    Pickup
+    Drive(pickup -> dropoff)
+    Dropoff
+
+    RouteResult is defined as exactly two segments to represent:
+      current -> pickup
+      pickup -> dropoff
+
+    This function consumes only RouteResult/RouteSegment data and does not know or care
+    how the coordinates were obtained from Nominatim or OSRM.
+
+    The HOS scheduler uses DriveTask.duration_hours as a planning duration based on the
+    project's operating assumption (55 mph default), while RouteSegment.duration_hours remains
+    the OSRM ETA for route/display purposes.
+    """
+    tasks: List[Union[DriveTask, ServiceTask]] = []
+
+    if len(route.segments) != 2:
+        raise ValueError(
+            "RouteResult must contain exactly 2 segments: current -> pickup and pickup -> dropoff."
+        )
+
+    first_segment = route.segments[0]
+    second_segment = route.segments[1]
+
+    segment_1_distance = first_segment.distance_miles
+    segment_2_distance = second_segment.distance_miles
+
+    tasks.append(
+        DriveTask(
+            duration_hours=_planning_duration_hours(segment_1_distance),
+            distance_miles=segment_1_distance,
+            start_mile=0.0,
+            end_mile=segment_1_distance,
+            origin=first_segment.origin,
+            destination=first_segment.destination,
+            origin_coordinates=first_segment.origin_coordinates,
+            destination_coordinates=first_segment.destination_coordinates,
+            polyline=first_segment.geometry,
+        )
+    )
+
+    tasks.append(
+        ServiceTask(
+            duration_hours=pickup_duration_hours,
+            route_mile=segment_1_distance,
+            location=route.pickup_location.name,
+            service_type=ServiceType.PICKUP,
+            annotation=f"Pickup at {route.pickup_location.name}",
+        )
+    )
+
+    tasks.append(
+        DriveTask(
+            duration_hours=_planning_duration_hours(segment_2_distance),
+            distance_miles=segment_2_distance,
+            start_mile=segment_1_distance,
+            end_mile=route.total_distance_miles,
+            origin=second_segment.origin,
+            destination=second_segment.destination,
+            origin_coordinates=second_segment.origin_coordinates,
+            destination_coordinates=second_segment.destination_coordinates,
+            polyline=second_segment.geometry,
+        )
+    )
+
+    tasks.append(
+        ServiceTask(
+            duration_hours=dropoff_duration_hours,
+            route_mile=route.total_distance_miles,
+            location=route.dropoff_location.name,
+            service_type=ServiceType.DROPOFF,
+            annotation=f"Dropoff at {route.dropoff_location.name}",
+        )
+    )
+
+    return tasks
 
 
 def build_tasks(

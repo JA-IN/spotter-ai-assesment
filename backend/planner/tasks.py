@@ -44,6 +44,8 @@ class DriveTask:
         end_mile: Mile marker along the overall trip where this leg ends.
         destination: Destination location or name.
         origin: Origin location or name.
+        origin_coordinates: Optional coordinates for the leg start.
+        destination_coordinates: Optional coordinates for the leg end.
         polyline: Optional list of (lat, lng) coordinate pairs for map rendering.
     """
     duration_hours: float
@@ -52,6 +54,8 @@ class DriveTask:
     end_mile: float
     destination: str
     origin: str = ""
+    origin_coordinates: Optional[Tuple[float, float]] = None
+    destination_coordinates: Optional[Tuple[float, float]] = None
     polyline: List[Tuple[float, float]] = field(default_factory=list)
 
 
@@ -85,7 +89,9 @@ class DutyEvent:
         duration_hours: Duration of the event in hours.
         status: FMCSA Duty Status category.
         annotation: Human-readable description (e.g., 'Driving to Dallas', '30-min break').
-        route_mile: Mile marker at which the event occurred / started.
+        route_mile: Mile marker at which the event started.
+        end_route_mile: Mile marker at which the event ended. Set for DRIVING events;
+                        None for non-driving events (PICKUP, DROPOFF, FUEL, REST, BREAK).
         location_name: Name of location or corridor.
         event_type: Specific event classification (e.g., 'DRIVE', 'PICKUP', 'DROPOFF', 'FUEL', 'REST', 'BREAK').
     """
@@ -95,6 +101,7 @@ class DutyEvent:
     status: DutyStatus
     annotation: str
     route_mile: float
+    end_route_mile: Optional[float] = None
     location_name: str = ""
     event_type: str = ""
 
