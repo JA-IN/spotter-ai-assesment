@@ -205,6 +205,62 @@ class TestHOSScheduler(unittest.TestCase):
         self.assertEqual(len(service_events), 1)
         self.assertEqual(service_events[0].duration_hours, 4.0)
 
+    def test_14_hour_shift_window_after_break_and_remaining_drive(self):
+        """The 8-hour driving threshold takes precedence, then the remaining drive reaches the 14-hour window and triggers a 10-hour rest."""
+        scheduler = HOSScheduler()
+
+        tasks = [
+            ServiceTask(
+                duration_hours=1.0,
+                route_mile=0.0,
+                location="Pickup",
+                service_type=ServiceType.PICKUP,
+            ),
+            DriveTask(
+                duration_hours=13.0,
+                distance_miles=715.0,
+                start_mile=0.0,
+                end_mile=715.0,
+                destination="Destination",
+            ),
+        ]
+
+        state = scheduler.schedule(tasks)
+
+        break_events = [
+            event
+            for event in state.events
+            if event.status == DutyStatus.OFF_DUTY and event.duration_hours == 0.5
+        ]
+        self.assertEqual(len(break_events), 1)
+
+        rest_events = [
+            event
+            for event in state.events
+            if event.status == DutyStatus.OFF_DUTY
+            and "10-hour" in event.annotation.lower()
+        ]
+
+        self.assertEqual(len(rest_events), 1)
+
+        break_event = break_events[0]
+        rest_event = rest_events[0]
+        first_shift_start = state.events[0].start_time
+
+        elapsed_before_break = (
+            break_event.start_time - first_shift_start
+        ).total_seconds() / 3600.0
+        elapsed_before_rest = (
+            rest_event.start_time - first_shift_start
+        ).total_seconds() / 3600.0
+
+        self.assertEqual(elapsed_before_break, 9.0)
+        self.assertEqual(elapsed_before_rest, 12.5)
+        self.assertEqual(rest_event.duration_hours, 10.0)
+
+        event_types = [event.event_type for event in state.events]
+        self.assertEqual(event_types, ["PICKUP", "DRIVE", "BREAK", "DRIVE", "REST", "DRIVE"])
+
     def test_5_70h_cycle_to_34h_restart(self):
         """Test 5: 70-hour / 8-day cycle limit triggers 34-hour off-duty restart."""
         start = datetime(2026, 9, 20, 6, 0, 0)

@@ -13,7 +13,7 @@ import unittest
 
 # Minimal Django setup so DRF serializers can be instantiated outside
 # a full manage.py environment.
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "spotter.settings")
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 django.setup()
 
 from planner.serializers import TripPlanRequestSerializer

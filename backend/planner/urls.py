@@ -1,8 +1,9 @@
-"""
-URL patterns for the planner API.
-"""
+"""URL patterns for the planner API."""
+
 from django.urls import path
 
+from planner.views import PlanTripView
+
 urlpatterns = [
-    # Trip planning endpoint will be routed here in Phase 3
+    path("plan-trip/", PlanTripView.as_view(), name="plan-trip"),
 ]
